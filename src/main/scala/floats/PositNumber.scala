@@ -29,36 +29,52 @@ class PositNumber(val bits: Int, val es: Int) {
     // Extract sign bit
     sign = (value >> (bits - 1)) == 1
 
-    // Get the value without sign bit for processing
-    var temp = value & ((BigInt(1) << (bits - 1)) - 1)
-
-    // Find regime
-    var regimeBits = 0
-    var firstBit = (temp >> (bits - 2)) & 1
-    temp = temp << 1
-    while (regimeBits < (bits - 2) && ((temp >> (bits - 1)) & 1) == firstBit) {
-      regimeBits += 1
-      temp = temp << 1
+    // Prepare the raw bit pattern for decoding.
+    // For negative posits the standard posit convention is to take the two's-complement
+    // of the entire n-bit pattern before decoding the regime/exponent/fraction.
+    val maskAll = (BigInt(1) << bits) - 1
+    var ui = value & maskAll
+    if (sign) {
+      // two's complement within n bits
+      ui = ((-ui) & maskAll)
     }
-    
-    regime = if (firstBit == 1) regimeBits else -regimeBits - 1
+    // now drop the sign bit and decode the remaining (bits-1) payload
+    val raw = ui & ((BigInt(1) << (bits - 1)) - 1)
 
-    // Extract exponent bits
+    // We'll walk bits from MSB (bits-2) down to LSB using a position index.
+    var pos = bits - 2
+
+    // Find regime run (count consecutive identical bits starting at pos)
+    val firstBit = ((raw >> pos) & 1).toInt
+    var run = 0
+    while (pos >= 0 && (((raw >> pos) & 1).toInt == firstBit)) {
+      run += 1
+      pos -= 1
+    }
+
+    // Compute regime k: if ones, k = run - 1; if zeros, k = -run
+    regime = if (firstBit == 1) run - 1 else -run
+
+    // If there is a terminating bit (opposite bit) consume it
+    if (pos >= 0) {
+      pos -= 1
+    }
+
+    // Extract exponent bits (up to `es`, limited by remaining bits)
     exponent = 0
-    val maxExponentBits = math.min(es, bits - 2 - regimeBits)
-    for (i <- 0 until maxExponentBits) {
-      exponent = (exponent << 1) | ((temp >> (bits - 1)) & 1).toInt
-      temp = temp << 1
+    val remainingForExp = math.max(0, pos + 1)
+    val expBits = math.min(es, remainingForExp)
+    for (i <- 0 until expBits) {
+      exponent = (exponent << 1) | (((raw >> pos) & 1).toInt)
+      pos -= 1
     }
 
     // Remaining bits are fraction
     fraction = 0
-    val remainingBits = bits - 2 - regimeBits - maxExponentBits
-    if (remainingBits > 0) {
-      for (i <- 0 until remainingBits) {
-        fraction = (fraction << 1) | ((temp >> (bits - 1)) & 1).toInt
-        temp = temp << 1
-      }
+    val remainingFrac = math.max(0, pos + 1)
+    for (i <- 0 until remainingFrac) {
+      fraction = (fraction << 1) | (((raw >> pos) & 1).toInt)
+      pos -= 1
     }
   }
 
